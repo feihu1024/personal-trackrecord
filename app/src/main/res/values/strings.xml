@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">足迹</string>
+    <string name="title_activity_bdmap">百度地图</string>
+    <string name="title_activity_upload">数据上传</string>
+    <string name="title_activity_detail">足迹详情</string>
+    <!--  字体图标  -->
+    <string name="icon_back">&#xe6ff;</string>
+    <string name="icon_map">&#xe600;</string>
+    <string name="icon_upload">&#xe621;</string>
+</resources>
