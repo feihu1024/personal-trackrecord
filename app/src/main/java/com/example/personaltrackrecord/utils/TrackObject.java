@@ -151,7 +151,7 @@ public class TrackObject implements Serializable {
                 + ", loctype="
                 + locType
                 + ", archiveDate="
-                + archiveDate
+                + TimeObject.toTimeString(archiveDate)
                 + ", longitude="
                 + longitude
                 + ", latitude="
@@ -174,5 +174,10 @@ public class TrackObject implements Serializable {
                 + locDesc
                 + '\''
                 + '}';
+    }
+
+    // 输出sql value格式的字符串，用于服务端导入数据 （adCode字段在pg中被定为int类型）
+    public String toSqlString(boolean needId) {
+        return "("+ (needId ? id+"," : "")+locType+",'"+TimeObject.toTimeString(archiveDate)+"',"+"st_geomfromtext('POINT(" + longitude + " " + latitude + ")')"+","+longitude+","+latitude+","+radius+",'"+coorType+"',"+adCode+",'"+town+"','"+street+"','"+locDesc+"')";
     }
 }

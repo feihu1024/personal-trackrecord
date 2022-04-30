@@ -71,6 +71,7 @@ public class UploadActivity extends AppCompatActivity {
                     TimeObject timeObject = (TimeObject) spnTime.getSelectedItem();
                     Thread uploadThread = createUploadThread(UploadActivity.this, timeObject, tvUploadMsg, false);
                     uploadThread.start();
+                    // insertTest(UploadActivity.this);
                 });
 
         // 设置返回
@@ -111,7 +112,9 @@ public class UploadActivity extends AppCompatActivity {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 TimeObject timeObject = (TimeObject) parent.getAdapter().getItem(position);
-                queryTrackCountByTime(timeObject.toTimeString());
+                int trackCount= queryTrackCountByTime(timeObject.toTimeString());
+                tvTime.setText(TV_TIME_TEXT + "\t当前共: " + trackCount + "条数据");
+                Log.d(TAG_UPDATE, "count： " + trackCount + "   time: " + timeObject.toTimeString());
             }
 
             @Override
@@ -120,14 +123,13 @@ public class UploadActivity extends AppCompatActivity {
         });
     }
 
-    public void queryTrackCountByTime(String time) {
+    public int queryTrackCountByTime(String time) {
         // 查询最近24h以内的数据
         String sql_queryTrackCount = "select count(id) as tcount from " + MySQLiteOpenHelper.TABLE_NAME + " where archiveDate >= '" + time + "';";
         Cursor cursor = db.rawQuery(sql_queryTrackCount, null);
         cursor.moveToNext();
         int trackCount = cursor.getInt(cursor.getColumnIndex("tcount"));
-        tvTime.setText(TV_TIME_TEXT + "\t当前共: " + trackCount + "条数据");
-        Log.d(TAG_UPDATE, "count： " + trackCount + "   time: " + time);
+        return trackCount;
     }
 
     public static Thread createUploadThread(Context context, TimeObject timeObject, TextView messageView, boolean isAuto) {
@@ -135,47 +137,54 @@ public class UploadActivity extends AppCompatActivity {
             @Override
             public void run() {
                 postMessage(messageView, "开始导出.....");
-                List<TrackObject> tracklist = queryTrackList(context, timeObject.toTimeString());
+
+                String timeString = timeObject.toTimeString();
+
+                SQLiteDatabase db = new MySQLiteOpenHelper(context, MySQLiteOpenHelper.DATABASE_NAME, null, MySQLiteOpenHelper.VERSION).getReadableDatabase();
+                String sql_queryTrackCount = "select count(id) as tcount from " + MySQLiteOpenHelper.TABLE_NAME + " where archiveDate >= '" + timeString + "';";
+
+                // 查询记录总数
+                Cursor cursor = db.rawQuery(sql_queryTrackCount, null);
+                cursor.moveToNext();
+                int trackCount = cursor.getInt(cursor.getColumnIndex("tcount"));
+
+
+                List<TrackObject> tracklist = null;
+                int writeSzie = 4000;
+                int writeCount = (int) Math.ceil(trackCount /(double) writeSzie);
+                int success=0;
+
+
+
                 StringBuilder sqlBuilder = new StringBuilder();
-                String fileName = "trackdata_" + timeObject.getText() + "_" + new SimpleDateFormat("yyyy-MM-dd").format(new Date()) + ".sql";
                 sqlBuilder.append("INSERT INTO \"public\".\"tb_track\"" + "(\"loc_type\", \"create_time\", \"loc_point\", " + "\"longitude\", \"latitude\", \"radius\", " +
                         "\"coor_type\", " + "\"ad_code\", \"town\", \"street\", \"ad_desc\") VALUES ");
-                int writeSzie = 10000;
-                int writeCount = (int) Math.ceil(tracklist.size() / (double) writeSzie);
-                TrackObject trackObject = null;
-                String sqlString = "";
+
+                String fileName = "trackdata_" + timeObject.getText() + "_" + new SimpleDateFormat("yyyy-MM-dd").format(new Date()) + ".sql";
                 File file = new File(context.getExternalFilesDir(isAuto ? "track-data-auto" : "track-data-custom"), fileName);
                 FileWriter fileWriter = null;
-                try {
+
+                try{
                     fileWriter = new FileWriter(file);
                     fileWriter.write(sqlBuilder.toString());
                     for (int i = 0; i < writeCount; i++) {
-                        sqlBuilder = new StringBuilder();
-                        for (int j = i * writeSzie; j < (i + 1) * writeSzie && j < tracklist.size(); j++) {
-                            trackObject = tracklist.get(j);
-                            sqlString = "("
-                                    + trackObject.getLocType() + ",'"
-                                    + DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(trackObject.getArchiveDate()) + "',"
-                                    + "st_geomfromtext('POINT(" + trackObject.getLongitude() + " " + trackObject.getLatitude() + ")')" + ","
-                                    + trackObject.getLongitude() + ","
-                                    + trackObject.getLatitude() + ","
-                                    + trackObject.getRadius() + ",'"
-                                    + trackObject.getCoorType() + "',"
-                                    + trackObject.getAdCode() + ",'"
-                                    + trackObject.getTown() + "','"
-                                    + trackObject.getStreet() + "','"
-                                    + trackObject.getLocDesc() + "'),";
-                            sqlBuilder.append(sqlString);
+                        tracklist = queryTrackListByPage(context, timeObject.toTimeString(),i,writeSzie);
+                        sqlBuilder.setLength(0);
+                        for (int j=0;j<tracklist.size();j++) {
+                            sqlBuilder.append(tracklist.get(j).toSqlString(false)+",");
                             // 替换最后的逗号
-                            if (j == tracklist.size() - 1) {
+                            if (i==writeCount-1 && j == tracklist.size() - 1) {
                                 sqlBuilder.replace(sqlBuilder.length() - 1, sqlBuilder.length(), " ON conflict(create_time) DO NOTHING;");
                             }
+                            // 计数并输出结果
+                            success++;
+                            postMessage(messageView, "数据导出中...\t" + String.format("%.2f",Double.valueOf(success/(double)trackCount*100))+"%" );
                         }
+                        // 写入文件
                         fileWriter.write(sqlBuilder.toString());
                     }
                     fileWriter.close();
-                    // System.out.println(fileName + "写入成功: " + tracklist.size() + "条 ----------------------------------");
-                    postMessage(messageView, "导出成功,当前共导出：" + tracklist.size() + "条\n" + "导出文件: " + fileName);
+                    postMessage(messageView, "导出成功,当前共导出：" + success + "条\n" + "导出文件: " + fileName);
                 } catch (IOException e) {
                     postMessage(messageView, "导出文件异常");
                     System.out.println("导出文件异常");
@@ -202,10 +211,54 @@ public class UploadActivity extends AppCompatActivity {
         return queryThread;
     }
 
+    public static void insertTest(Context context) {
+        // System.out.println(tracklist.get(0).printString());
+        // TrackObject{id=184469, loctype=61, archiveDate=2022-04-30T00:00:01, longitude=108.971217, latitude=34.225874, radius=9.0, coorType='gcj02', adCode='610113', town='大雁塔街道', street='西影路', locDesc='在后村嘉园附近'}
+        // id,aDate,locType,longitude,latitude,radius,adCode,coorType,town,street,locDesc
+        // locType===10000的都是测试数据
+        SQLiteDatabase db = new MySQLiteOpenHelper(context, MySQLiteOpenHelper.DATABASE_NAME, null, MySQLiteOpenHelper.VERSION).getWritableDatabase();
+        // db.execSQL("delete from tb_track where locType = 10000");
+        int writeSzie = 1000;
+        int writeCount = 1000;
+        String execSql = "";
+        for (int i = 0; i < writeCount; i++) {
+            String sql = "insert into "+MySQLiteOpenHelper.TABLE_NAME+"(locType,archiveDate,longitude,latitude,radius,coorType,adCode,town,street,locDesc) values";
+            for (int j = i * writeSzie; j < (i + 1) * writeSzie && j < writeSzie*writeCount; j++) {
+                sql+="("+"10000"+",'"+TimeObject.toTimeString(LocalDateTime.now())+"',108.971217"+",34.225874"+",9.0"+",'gcj02'"+",610113"+",'大雁塔街道'"+",'西影路'"+",'在后村嘉园附近'),";
+            }
+            execSql=sql.substring(0,sql.length()-1);
+            System.out.println(i+": "+execSql);
+            db.execSQL(execSql);
+        }
+    }
+
     public static List<TrackObject> queryTrackList(Context context, String time) {
         List<TrackObject> tracklist = new ArrayList<>();
         SQLiteDatabase db = new MySQLiteOpenHelper(context, MySQLiteOpenHelper.DATABASE_NAME, null, MySQLiteOpenHelper.VERSION).getReadableDatabase();
         String sql_queryTracklist = "select *, datetime(archiveDate) as aDate from " + MySQLiteOpenHelper.TABLE_NAME + " where archiveDate >= '" + time + "';";
+        Cursor cursor = db.rawQuery(sql_queryTracklist, null);
+        while (cursor.moveToNext()) {
+            TrackObject to = new TrackObject();
+            to.setId(cursor.getInt(0));
+            to.setArchiveDate(LocalDateTime.parse(cursor.getString(cursor.getColumnIndex("aDate")), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            to.setLocType(cursor.getInt(cursor.getColumnIndex("locType")));
+            to.setLongitude(cursor.getDouble(cursor.getColumnIndex("longitude")));
+            to.setLatitude(cursor.getDouble(cursor.getColumnIndex("latitude")));
+            to.setRadius(cursor.getFloat(cursor.getColumnIndex("radius")));
+            to.setAdCode(cursor.getString(cursor.getColumnIndex("adCode")));
+            to.setCoorType(cursor.getString(cursor.getColumnIndex("coorType")));
+            to.setTown(cursor.getString(cursor.getColumnIndex("town")));
+            to.setStreet(cursor.getString(cursor.getColumnIndex("street")));
+            to.setLocDesc(cursor.getString(cursor.getColumnIndex("locDesc")));
+            tracklist.add(to);
+        }
+        return tracklist;
+    }
+
+    public static List<TrackObject> queryTrackListByPage(Context context, String time,int page,int size) {
+        List<TrackObject> tracklist = new ArrayList<>();
+        SQLiteDatabase db = new MySQLiteOpenHelper(context, MySQLiteOpenHelper.DATABASE_NAME, null, MySQLiteOpenHelper.VERSION).getReadableDatabase();
+        String sql_queryTracklist = "select *, datetime(archiveDate) as aDate from " + MySQLiteOpenHelper.TABLE_NAME + " where archiveDate >= '" + time + "' limit "+size+" offset "+(size*page)+";";
         Cursor cursor = db.rawQuery(sql_queryTracklist, null);
         while (cursor.moveToNext()) {
             TrackObject to = new TrackObject();

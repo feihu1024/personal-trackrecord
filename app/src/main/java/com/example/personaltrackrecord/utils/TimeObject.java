@@ -52,4 +52,8 @@ public class TimeObject {
     public String toTimeString() {
         return dateTimeFormatter.format(time);
     }
+
+    public static String toTimeString(LocalDateTime time) {
+        return dateTimeFormatter.format(time);
+    }
 }
